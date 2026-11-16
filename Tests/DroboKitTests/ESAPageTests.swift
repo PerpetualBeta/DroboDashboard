@@ -101,25 +101,31 @@ final class ESAPageTests: XCTestCase {
     }
 
     func testSlotInfoParse() throws {
+        // Measured record layout (live 5D3 2026-11-16): 6-byte page header,
+        // 0x48-byte records: marker 0x46 at 0, slot index at 1, capacity
+        // BE64 at 2, reserved BE64 at 0x0A, state at 0x12, model 32 bytes
+        // at 0x13, short model 16 bytes at 0x33.
         var data = page(0x03, [])
-        data.append(contentsOf: [0x00, 0x4C])                // +2..3 page length
+        data.append(contentsOf: [0x01, 0xB1])                // +2..3 page length
         data.append(0x01)                                    // +4 slot count
-        var slot = Data(repeating: 0, count: 0x44)
-        slot[2] = 0x03
-        var serial: UInt64 = 0x0011223344556677
-        var serialBE = serial.bigEndian
-        withUnsafeBytes(of: &serialBE) { slot.replaceSubrange(3..<11, with: Data($0)) }
-        slot[0x13] = 0x01
-        slot.replaceSubrange(0x14..<0x14 + 5, with: Data("Bay 1".utf8))
-        slot.replaceSubrange(0x34..<0x34 + 3, with: Data("WDC".utf8))
+        data.append(0x00)                                    // +5 reserved
+        var slot = Data(repeating: 0, count: 0x48)
+        slot[0] = 0x46
+        slot[1] = 0x00
+        var capacity: UInt64 = 4_000_787_030_016             // exactly a 4TB drive
+        var capacityBE = capacity.bigEndian
+        withUnsafeBytes(of: &capacityBE) { slot.replaceSubrange(2..<10, with: Data($0)) }
+        slot[0x12] = 0x03
+        slot.replaceSubrange(0x13..<0x13 + 5, with: Data("Bay 1".utf8))
+        slot.replaceSubrange(0x33..<0x33 + 3, with: Data("WDC".utf8))
         data.append(slot)
         let slots = try ESASlotInfo.parse(data)
         XCTAssertEqual(slots.count, 1)
         XCTAssertEqual(slots[0].state, 0x03)
-        XCTAssertEqual(slots[0].serial, 0x0011223344556677)
-        XCTAssertEqual(slots[0].flag, 0x01)
-        XCTAssertEqual(slots[0].name, "Bay 1")
-        XCTAssertEqual(slots[0].shortName, "WDC")
+        XCTAssertEqual(slots[0].capacityBytes, capacity)
+        XCTAssertEqual(slots[0].reserved, 0)
+        XCTAssertEqual(slots[0].model, "Bay 1")
+        XCTAssertEqual(slots[0].shortModel, "WDC")
     }
 
     func testSlotInfoMultiple() throws {

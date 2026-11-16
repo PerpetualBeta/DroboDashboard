@@ -76,7 +76,8 @@ public final class ESASession {
     }
 
     public func getSlotInfo() throws -> [ESASlotInfo] {
-        // Allocation covers eight bays: 5-byte header + 8 x 0x44-byte structs.
+        // Allocation covers the measured page: 8-byte header + 6 x 0x48-byte
+        // records (5 bays + the SSD cache slot on the 5D3) = 0x1b1.
         let raw = try modeSense(subpage: ESASlotInfo.subpage, allocationLength: 0x230)
         return try ESASlotInfo.parse(Self.pageData(ofModeSenseResponse: raw))
     }

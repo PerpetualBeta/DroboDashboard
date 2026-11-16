@@ -167,35 +167,50 @@ public struct ESAFirmwareInfo: Equatable {
 
 /// Drive bay state. The page holds a count byte at +4 followed by count
 /// fixed-size slot structs starting at +5.
+/// Slot page (subpage 0x03), MEASURED on the live 5D3 2026-11-16.
+///
+/// Page: 6-byte header [tag 0x7a, subpage, BE16 length, count, reserved],
+/// then `count` records of 0x48 bytes. On the 5D3 the count is 6: the five
+/// drive bays plus the internal SSD cache slot. The length field (0x1b1)
+/// counts from offset 5 to the page end.
+///
+/// Record layout (offsets relative to the record):
+///   0x00  marker 0x46
+///   0x01  slot index (0..5)
+///   0x02  BE64 capacity in bytes (4000787030016 = exactly a 4TB drive)
+///   0x0A  BE64 reserved (zeros on every slot observed)
+///   0x12  state byte (0x03 = present and good)
+///   0x13  model string, 32 bytes, space-padded
+///   0x33  short model, 16 bytes, space-padded, right-aligned
+///   0x43  5 bytes tail (R0 carries 0x01 in the first byte; unfitted)
 public struct ESASlotInfo: Equatable {
     public let state: UInt8
-    public let serial: UInt64
-    public let field2: UInt64
-    public let flag: UInt8
-    public let name: String
-    public let shortName: String
+    public let capacityBytes: UInt64
+    public let reserved: UInt64
+    public let model: String
+    public let shortModel: String
 
     public static let subpage: UInt8 = 0x03
-    public static let structSize = 0x44
+    public static let headerSize = 0x06
+    public static let recordSize = 0x48
 
     public static func parse(_ data: Data) throws -> [ESASlotInfo] {
-        try ESAPage.guardPage(data, expectedSubpage: subpage, minimumLength: 5, name: "SlotInfo")
+        try ESAPage.guardPage(data, expectedSubpage: subpage, minimumLength: headerSize, name: "SlotInfo")
         let count = Int(data[4])
         var slots: [ESASlotInfo] = []
         slots.reserveCapacity(count)
-        var offset = 5
+        var offset = headerSize
         for _ in 0..<count {
-            guard offset + structSize <= data.count else { break }
-            let s = data.subdata(in: offset..<offset + structSize)
+            guard offset + recordSize <= data.count else { break }
+            let s = data.subdata(in: offset..<offset + recordSize)
             slots.append(ESASlotInfo(
-                state: s[2],
-                serial: ESAPage.be64(s, 3),
-                field2: ESAPage.be64(s, 0x0B),
-                flag: s[0x13],
-                name: ESAPage.ascii(s, 0x14, 0x20),
-                shortName: ESAPage.ascii(s, 0x34, 0x10)
+                state: s[0x12],
+                capacityBytes: ESAPage.be64(s, 0x02),
+                reserved: ESAPage.be64(s, 0x0A),
+                model: ESAPage.ascii(s, 0x13, 0x20).trimmingCharacters(in: .whitespaces),
+                shortModel: ESAPage.ascii(s, 0x33, 0x10).trimmingCharacters(in: .whitespaces)
             ))
-            offset += structSize
+            offset += recordSize
         }
         return slots
     }

@@ -157,13 +157,13 @@ func probe(args: inout [String: String]) throws {
         (ESACapacityInfo.subpage, "capacity", ESACapacityInfo.minimumLength),
         (ESAFirmwareInfo.subpage, "firmware", 0x3A),
         (ESAStatusInfo.subpage, "status", 0x18),
-        (ESASlotInfo.subpage, "slots", 0x100)
+        (ESASlotInfo.subpage, "slots", 0x220)
     ]
     for (subpage, name, size) in subpages {
         print("\n== \(name) (subpage 0x\(String(subpage, radix: 16))) ==")
         do {
             let raw = try session.modeSense(subpage: subpage, allocationLength: size + 0x10)
-            print(hexDump(raw, limit: min(size + 0x10, 0x60)))
+            print(hexDump(raw, limit: min(size + 0x10, 0x200)))
             let pageData = ESASession.pageData(ofModeSenseResponse: raw)
             switch subpage {
             case ESASystemInfo.subpage:
@@ -206,9 +206,11 @@ func status(args: inout [String: String]) throws {
     do {
         let slots = try session.getSlotInfo()
         for (index, slot) in slots.enumerated() {
-            print("bay \(index + 1)   : state 0x\(String(slot.state, radix: 16)) serial 0x\(String(slot.serial, radix: 16)) name \(slot.name) [\(slot.shortName)]")
+            let terabytes = Double(slot.capacityBytes) / 1_000_000_000_000
+            let label = (slots.count == 6 && index == 5) ? "cache" : "bay \(index + 1)  "
+            print("slot \(index + 1) [\(label)]: state 0x\(String(slot.state, radix: 16)) \(slot.capacityBytes) bytes (\(String(format: "%.2f", terabytes)) TB) \(slot.model)")
         }
-    } catch { print("bays      : failed: \(error)") }
+    } catch { print("slots     : failed: \(error)") }
     printUnlockHint()
 }
 
