@@ -34,6 +34,17 @@ host: build dext icon
 	    --entitlements dext/DroboServiceHost.entitlements $(APP)
 	@echo "Built and signed $(APP). Install with: open $(APP)"
 
+DASH := .build/DroboDashboard.app
+
+dashboard: build icon
+	@rm -rf $(DASH)
+	@mkdir -p $(DASH)/Contents/MacOS $(DASH)/Contents/Resources
+	cp .build/$(CONFIG)/DroboDashboardUI $(DASH)/Contents/MacOS/DroboDashboard
+	cp Resources/AppIcon.icns $(DASH)/Contents/Resources/
+	@printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>CFBundleIdentifier</key>\n\t<string>cc.jorvik.drobodashboard</string>\n\t<key>CFBundleName</key>\n\t<string>DroboDashboard</string>\n\t<key>CFBundleExecutable</key>\n\t<string>DroboDashboard</string>\n\t<key>CFBundlePackageType</key>\n\t<string>APPL</string>\n\t<key>CFBundleIconFile</key>\n\t<string>AppIcon</string>\n\t<key>CFBundleShortVersionString</key>\n\t<string>0.1.0</string>\n\t<key>CFBundleVersion</key>\n\t<string>1</string>\n\t<key>NSHumanReadableCopyright</key>\n\t<string></string>\n\t<key>NSPrincipalClass</key>\n\t<string>NSApplication</string>\n</dict>\n</plist>\n' > $(DASH)/Contents/Info.plist
+	codesign --force --timestamp --options runtime --sign "$(IDENTITY)" $(DASH)
+	@echo "Built and signed $(DASH). Run with: open $(DASH)"
+
 dext:
 	@gmake -f dext/Makefile all
 

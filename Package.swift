@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "DroboDashboard",
+    platforms: [.macOS(.v14)],
     targets: [
         // Pure protocol layer: TM wire codec, CDB builders, ESA page parsers.
         .target(name: "DroboKit"),
@@ -32,6 +33,11 @@ let package = Package(
         // Minimal host app that installs and activates the DroboDext system
         // extension. Bundled by the `host` Makefile target.
         .executableTarget(name: "DroboServiceHost"),
+        // The Dashboard window: live pool read-only through the dext.
+        .executableTarget(
+            name: "DroboDashboardUI",
+            dependencies: ["DroboKit", "DroboTransport", "DDServiceC"]
+        ),
         .testTarget(name: "DroboKitTests", dependencies: ["DroboKit"])
     ]
 )

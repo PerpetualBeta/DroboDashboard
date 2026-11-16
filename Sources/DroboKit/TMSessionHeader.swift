@@ -57,8 +57,10 @@ public struct TMSessionHeader: Equatable {
             throw DroboError.badFrame("bad session magic")
         }
         var be: UInt32 = 0
-        withUnsafeMutableBytes(of: &be) { dst in
-            data.subdata(in: 12..<16).copyBytes(to: dst)
+        data.subdata(in: 12..<16).withUnsafeBytes { src in
+            withUnsafeMutableBytes(of: &be) { dst in
+                dst.copyBytes(from: src)
+            }
         }
         return TMSessionHeader(
             primaryOpcode: data[8],

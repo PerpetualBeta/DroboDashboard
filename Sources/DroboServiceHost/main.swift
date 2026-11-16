@@ -24,9 +24,13 @@ func say(_ line: String)
         FileManager.default.createFile(atPath: logPath, contents: nil)
     }
     let handle = FileHandle(forWritingAtPath: logPath)
-    try? handle?.seekToEndOfFile()
-    try? handle?.write(contentsOf: data)
-    try? handle?.close()
+    handle?.seekToEndOfFile()
+    do {
+        try handle?.write(contentsOf: data)
+        try handle?.close()
+    } catch {
+        // A dead log handle must never take the host app down.
+    }
     print(line)
 }
 
