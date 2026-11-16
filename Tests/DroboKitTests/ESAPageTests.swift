@@ -129,16 +129,17 @@ final class ESAPageTests: XCTestCase {
         XCTAssertEqual(slots.count, 2)
     }
 
-    func testESASessionSlicesModeHeader() throws {
-        // A full MODE SENSE response: 8-byte header, then the page. Slicing
-        // drops the header; the page tag stays first, and a zero-filled
-        // capacity page parses fine with all fields zero.
-        var response = Data(repeating: 0xEE, count: 8)
-        response.append(page(0x02, {
+    func testESASessionReturnsRawPage() throws {
+        // MEASURED on the live 5D3 (2026-11-16): the Drobo's vendor
+        // MODE SENSE(10) response carries the raw ESA page with NO mode
+        // parameter header. Byte 0 is the page tag 0x7a, byte 1 the subpage,
+        // and pageData returns the response unchanged.
+        var response = page(0x02, {
             var p: [UInt8] = [0, 0]
             p.append(contentsOf: [UInt8](repeating: 0, count: 32))
             return p
-        }()))
+        }())
+        response[0] = ESAPage.tag
         let pageData = ESASession.pageData(ofModeSenseResponse: response)
         XCTAssertEqual(pageData[0], ESAPage.tag)
         XCTAssertEqual(pageData[1], 0x02)

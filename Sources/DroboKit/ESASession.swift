@@ -45,11 +45,11 @@ public final class ESASession {
         return buffer.prefix(realized)
     }
 
-    /// The page data as the parsers expect it: page tag first, after the
-    /// mode parameter header.
+    /// The page data as the parsers expect it: page tag first. The Drobo's
+    /// vendor MODE SENSE(10) response carries the raw ESA page with NO mode
+    /// parameter header: byte 0 is the page tag 0x7a, byte 1 the subpage.
     public static func pageData(ofModeSenseResponse raw: Data) -> Data {
-        guard raw.count > 8 else { return Data() }
-        return raw.subdata(in: 8..<raw.count)
+        return raw
     }
 
     public func getSystemInfo() throws -> ESASystemInfo {

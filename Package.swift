@@ -29,6 +29,9 @@ let package = Package(
             name: "drobo",
             dependencies: ["DroboKit", "DroboTransport", "DDServiceC"]
         ),
+        // Minimal host app that installs and activates the DroboDext system
+        // extension. Bundled by the `host` Makefile target.
+        .executableTarget(name: "DroboServiceHost"),
         .testTarget(name: "DroboKitTests", dependencies: ["DroboKit"])
     ]
 )

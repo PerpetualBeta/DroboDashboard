@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Mirrors ccjorvikdroboservice.provisionprofile exactly. Declaring more
+     than the profile grants makes launchd kill the spawn (POSIX 163). -->
+<dict>
+	<key>com.apple.developer.system-extension.install</key>
+	<true/>
+</dict>
+</plist>
