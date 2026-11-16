@@ -22,6 +22,10 @@ public enum ESAPage {
         }
     }
 
+    static func be16(_ data: Data, _ offset: Int) -> UInt16 {
+        UInt16(data[offset]) << 8 | UInt16(data[offset + 1])
+    }
+
     static func be32(_ data: Data, _ offset: Int) -> UInt32 {
         UInt32(data[offset]) << 24 | UInt32(data[offset + 1]) << 16
             | UInt32(data[offset + 2]) << 8 | UInt32(data[offset + 3])
@@ -65,14 +69,15 @@ public struct ESASystemInfo: Equatable {
 
 // MARK: - ESACapacityInfo (subpage 0x02)
 
-/// Four big-endian u64 fields at +4, +12, +20, +28. The original parser's
-/// length check is 0x1C, which does not cover the field at +28; it survived on
-/// the device always returning more. Our guard covers what we read: 0x24.
+/// Four big-endian u64 fields at +4, +12, +20, +28. Semantics PINNED against
+/// DDService64d (ESACapacityInfo::print, REA 2026-11-16): free, used, total,
+/// all "(Protected)", then "(Unprotected)" total. On the live 5D3 the
+/// unprotected field reads 0.
 public struct ESACapacityInfo: Equatable {
-    public let field1: UInt64
-    public let field2: UInt64
-    public let field3: UInt64
-    public let field4: UInt64
+    public let freeBytes: UInt64
+    public let usedBytes: UInt64
+    public let totalProtectedBytes: UInt64
+    public let totalUnprotectedBytes: UInt64
 
     public static let subpage: UInt8 = 0x02
     /// 0x1C in the original parser; raised here to cover the field at +28.
@@ -81,19 +86,24 @@ public struct ESACapacityInfo: Equatable {
     public static func parse(_ data: Data) throws -> ESACapacityInfo {
         try ESAPage.guardPage(data, expectedSubpage: subpage, minimumLength: minimumLength, name: "CapacityInfo")
         return ESACapacityInfo(
-            field1: ESAPage.be64(data, 4),
-            field2: ESAPage.be64(data, 12),
-            field3: ESAPage.be64(data, 20),
-            field4: ESAPage.be64(data, 28)
+            freeBytes: ESAPage.be64(data, 4),
+            usedBytes: ESAPage.be64(data, 12),
+            totalProtectedBytes: ESAPage.be64(data, 20),
+            totalUnprotectedBytes: ESAPage.be64(data, 28)
         )
     }
 }
 
 // MARK: - ESAStatusInfo (subpage 0x09)
 
-/// Health and data-protection state. Two wire shapes exist: the short form
-/// ends after the diskpack status; the long form adds relayout and
-/// double-degraded counters. Field names follow the original traces.
+/// Health and data-protection state. Three page-size generations exist, from
+/// calculateModePageSize in DDService64d (REA 2026-11-16): 0x10 ends after
+/// diskpackStatus, 0x14 adds relayoutCount, 0x18 adds doubleDegraded. The
+/// declared length (BE16 at +2) is the full page size and the authority for
+/// which fields exist; the 5D3 declares 0x10. The transport can deliver bytes
+/// past the page end (measured: 36-byte responses for a 16-byte page, tail
+/// stale junk that changed between reads), so optionals are gated on the
+/// declared length, never on the buffer length.
 public struct ESAStatusInfo: Equatable {
     public let status: UInt32
     public let extendedStatus: UInt32
@@ -105,15 +115,19 @@ public struct ESAStatusInfo: Equatable {
 
     public static func parse(_ data: Data) throws -> ESAStatusInfo {
         try ESAPage.guardPage(data, expectedSubpage: subpage, minimumLength: 0x10, name: "StatusInfo")
-        let diskpack: UInt32? = data.count > 0x0C ? ESAPage.be32(data, 0x0C) : nil
-        let relayout: UInt32? = data.count > 0x10 ? ESAPage.be32(data, 0x10) : nil
-        let doubleDegraded: UInt32? = data.count > 0x14 ? ESAPage.be32(data, 0x14) : nil
+        let declared = Int(ESAPage.be16(data, 2))
+        guard declared >= 0x10 else {
+            throw DroboError.badPage("StatusInfo declares \(declared) bytes, need 0x10")
+        }
+        func field(_ offset: Int) -> UInt32? {
+            declared >= offset + 4 && data.count >= offset + 4 ? ESAPage.be32(data, offset) : nil
+        }
         return ESAStatusInfo(
             status: ESAPage.be32(data, 4),
             extendedStatus: ESAPage.be32(data, 8),
-            diskpackStatus: diskpack,
-            relayoutCount: relayout,
-            doubleDegraded: doubleDegraded
+            diskpackStatus: field(0x0C),
+            relayoutCount: field(0x10),
+            doubleDegraded: field(0x14)
         )
     }
 

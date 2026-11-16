@@ -35,10 +35,10 @@ final class ESAPageTests: XCTestCase {
             withUnsafeBytes(of: &be) { data.append(contentsOf: $0) }
         }
         let info = try ESACapacityInfo.parse(data)
-        XCTAssertEqual(info.field1, 0x1111111111111111)
-        XCTAssertEqual(info.field2, 0x2222222222222222)
-        XCTAssertEqual(info.field3, 0x3333333333333333)
-        XCTAssertEqual(info.field4, 0x4444444444444444)
+        XCTAssertEqual(info.freeBytes, 0x1111111111111111)
+        XCTAssertEqual(info.usedBytes, 0x2222222222222222)
+        XCTAssertEqual(info.totalProtectedBytes, 0x3333333333333333)
+        XCTAssertEqual(info.totalUnprotectedBytes, 0x4444444444444444)
     }
 
     func testCapacityInfoRejectsShort() {
@@ -46,8 +46,9 @@ final class ESAPageTests: XCTestCase {
     }
 
     func testStatusInfoShortForm() throws {
+        // Generation 0x10 (the live 5D3): status, extended, diskpack only.
         var data = page(0x09, [])
-        data.append(contentsOf: [0, 0])                      // +2..+3
+        data.append(contentsOf: [0x00, 0x10])                // +2..3 declared length 0x10
         data.append(contentsOf: [0, 0, 0x12, 0x34])          // +4  status
         data.append(contentsOf: [0, 0, 0, 0x05])             // +8  extended
         data.append(contentsOf: [0, 0, 0, 0x01])             // +12 diskpackStatus
@@ -56,13 +57,35 @@ final class ESAPageTests: XCTestCase {
         XCTAssertEqual(info.extendedStatus, 0x05)
         XCTAssertEqual(info.diskpackStatus, 0x01)
         XCTAssertNil(info.relayoutCount)
+        XCTAssertNil(info.doubleDegraded)
+    }
+
+    func testStatusInfoIgnoresJunkPastDeclaredLength() throws {
+        // MEASURED on the live 5D3 (2026-11-16): the transport returned 36
+        // bytes for the 16-byte page and the tail was stale junk that changed
+        // between reads (0xff runs one read, a byte-shifted echo of the
+        // capacity page the next). Fields past the declared length stay nil.
+        var data = page(0x09, [])
+        data.append(contentsOf: [0x00, 0x10])                // +2..3 declared length 0x10
+        data.append(contentsOf: [0, 0, 0x28, 0x00])          // +4  status
+        data.append(contentsOf: [0, 0, 0, 0])                // +8  extended
+        data.append(contentsOf: [0, 0, 0, 0])                // +12 diskpackStatus
+        data.append(contentsOf: [0xff, 0xff, 0xf7, 0xf7,     // +16 junk tail
+                                 0xf7, 0xfd, 0xfe, 0x7f,
+                                 0xff, 0xff, 0xff, 0xf5])
+        let info = try ESAStatusInfo.parse(data)
+        XCTAssertEqual(info.status, 0x2800)
+        XCTAssertEqual(info.diskpackStatus, 0)
+        XCTAssertNil(info.relayoutCount)
+        XCTAssertNil(info.doubleDegraded)
     }
 
     func testStatusInfoLongForm() throws {
+        // Generation 0x18: adds relayout and doubleDegraded.
         var data = page(0x09, [])
-        data.append(contentsOf: [UInt8](repeating: 0, count: 2))
-        data.append(contentsOf: [0, 0, 0, 0])                // +4
-        data.append(contentsOf: [0, 0, 0, 0])                // +8
+        data.append(contentsOf: [0x00, 0x18])                // +2..3 declared length 0x18
+        data.append(contentsOf: [0, 0, 0, 0])                // +4  status
+        data.append(contentsOf: [0, 0, 0, 0])                // +8  extended
         data.append(contentsOf: [0, 0, 0, 0x02])             // +12 diskpackStatus
         data.append(contentsOf: [0, 0, 0, 0x09])             // +16 relayout
         data.append(contentsOf: [0, 0, 0, 0x01])             // +20 doubleDegraded
@@ -129,8 +152,8 @@ final class ESAPageTests: XCTestCase {
     }
 
     func testSlotInfoMultiple() throws {
-        var data = page(0x03, [0x00, 0x99, 0x02])
-        for _ in 0..<2 { data.append(Data(repeating: 0, count: 0x44)) }
+        var data = page(0x03, [0x00, 0x99, 0x02, 0x00])
+        for _ in 0..<2 { data.append(Data(repeating: 0, count: 0x48)) }
         let slots = try ESASlotInfo.parse(data)
         XCTAssertEqual(slots.count, 2)
     }
@@ -150,6 +173,6 @@ final class ESAPageTests: XCTestCase {
         XCTAssertEqual(pageData[0], ESAPage.tag)
         XCTAssertEqual(pageData[1], 0x02)
         let info = try ESACapacityInfo.parse(pageData)
-        XCTAssertEqual(info, ESACapacityInfo(field1: 0, field2: 0, field3: 0, field4: 0))
+        XCTAssertEqual(info, ESACapacityInfo(freeBytes: 0, usedBytes: 0, totalProtectedBytes: 0, totalUnprotectedBytes: 0))
     }
 }

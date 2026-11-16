@@ -197,7 +197,8 @@ func status(args: inout [String: String]) throws {
     } catch { print("firmware : failed: \(error)") }
     do {
         let capacity = try session.getCapacityInfo()
-        print("capacity : fields \(capacity.field1) \(capacity.field2) \(capacity.field3) \(capacity.field4)")
+        let tb: (UInt64) -> String = { String(format: "%.2f", Double($0) / 1_000_000_000_000) }
+        print("capacity : free \(tb(capacity.freeBytes)) TB used \(tb(capacity.usedBytes)) TB total \(tb(capacity.totalProtectedBytes)) TB protected, \(tb(capacity.totalUnprotectedBytes)) TB unprotected")
     } catch { print("capacity : failed: \(error)") }
     do {
         let state = try session.getStatusInfo()
