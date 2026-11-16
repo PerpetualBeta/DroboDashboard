@@ -101,19 +101,53 @@ func dextStateLines() -> [String] {
 }
 
 func commandHeal() {
-    // Dext server processes are on-demand spawns; an upgrade waits for the
-    // old one to exit and it never does on its own. Killing them is safe:
-    // the live one respawns when the device re-matches.
-    let pids = runCapture("/usr/bin/pgrep", ["DroboDext"])
-        .split(separator: "\n")
-        .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
-    if pids.isEmpty {
-        print("no DroboDext server processes to kill")
+    // A wedge is an OLD server surviving an upgrade: the DK upgrade waits
+    // for the previous server to exit and it never does on its own. But the
+    // healthy provider of the ACTIVE dext also runs as a server process, so
+    // existence is not evidence of wedging. The rule is time: kill only
+    // servers that started BEFORE the active dext bundle was installed. A
+    // server younger than the install is the current provider; killing it
+    // is pointless at best. MEASURED 2026-11-16: heal flagged a healthy
+    // provider (started 20:50, bundle installed 19:45) and nearly sudo-
+    // killed it; the password prompt was the only thing that stopped that.
+    let bundleDates = (try? FileManager.default
+        .contentsOfDirectory(atPath: "/Library/SystemExtensions"))?
+        .compactMap { entry -> Date? in
+            let dext = "/Library/SystemExtensions/\(entry)/cc.jorvik.drobodext.dext"
+            return try? FileManager.default.attributesOfItem(atPath: dext)[.modificationDate] as? Date
+        }
+        .sorted()
+    let activeInstall = bundleDates?.last
+
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.dateFormat = "EEE MMM d HH:mm:ss yyyy"
+
+    var wedged: [Int] = []
+    var healthy: [Int] = []
+    for line in runCapture("/usr/bin/pgrep", ["DroboDext"]).split(separator: "\n") {
+        guard let pid = Int(line.trimmingCharacters(in: .whitespaces)) else { continue }
+        // Trim newlines too: ps ends its line with one, and DateFormatter
+        // refuses to parse a string with trailing garbage.
+        let started = formatter.date(from: runCapture("/bin/ps", ["-o", "lstart=", "-p", String(pid)])
+            .trimmingCharacters(in: .whitespacesAndNewlines))
+        if let activeInstall, let started, started >= activeInstall {
+            healthy.append(pid)
+        } else {
+            wedged.append(pid)
+        }
+    }
+
+    if !healthy.isEmpty {
+        print("server\(healthy.count == 1 ? "" : "s") \(healthy.map(String.init).joined(separator: " ")) started after the active dext install: current, left running")
+    }
+    if wedged.isEmpty {
+        if healthy.isEmpty { print("no DroboDext server processes running") }
     } else {
-        print("killing wedged DroboDext server\(pids.count == 1 ? "" : "s"): \(pids.map(String.init).joined(separator: " "))")
+        print("killing wedged DroboDext server\(wedged.count == 1 ? "" : "s"): \(wedged.map(String.init).joined(separator: " "))")
         let kill = Process()
         kill.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-        kill.arguments = ["kill"] + pids.map(String.init)
+        kill.arguments = ["kill"] + wedged.map(String.init)
         kill.standardError = FileHandle.nullDevice
         do {
             try kill.run()
