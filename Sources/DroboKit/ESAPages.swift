@@ -204,6 +204,15 @@ public struct ESASlotInfo: Equatable {
     public let model: String
     public let shortModel: String
 
+    public init(state: UInt8, capacityBytes: UInt64, reserved: UInt64,
+                model: String, shortModel: String) {
+        self.state = state
+        self.capacityBytes = capacityBytes
+        self.reserved = reserved
+        self.model = model
+        self.shortModel = shortModel
+    }
+
     public static let subpage: UInt8 = 0x03
     public static let headerSize = 0x06
     public static let recordSize = 0x48

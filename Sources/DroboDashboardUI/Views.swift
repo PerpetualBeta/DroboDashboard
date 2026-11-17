@@ -31,7 +31,8 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            HealthPill(status: model.snapshot.status)
+            HealthPill(status: model.snapshot.status,
+                       slots: model.snapshot.slots)
         }
     }
 
@@ -64,27 +65,28 @@ struct ContentView: View {
     }
 }
 
-/// Green when the disk pack reports no fault. Diskpack 0 is the measured
-/// healthy value on this firmware; anything else shows raw until pinned.
+/// Green when the shared PackHealth evaluator passes; yellow with the
+/// reason otherwise. The SAME rule set the health agent notifies on, so
+/// the window and the agent cannot disagree.
 private struct HealthPill: View {
     let status: ESAStatusInfo?
-
-    init(status: ESAStatusInfo?) {
-        self.status = status
-    }
+    let slots: [ESASlotInfo]
 
     var body: some View {
-        let healthy = status?.diskpackStatus == nil || status?.diskpackStatus == 0 || status?.diskpackStatus == 1
+        let verdict = PackHealth.evaluate(status: status, slots: slots)
+        let healthy = verdict.isHealthy
         HStack(spacing: 5) {
             Circle()
                 .fill(healthy ? Color.green : Color.yellow)
                 .frame(width: 8, height: 8)
-            Text(healthy ? "Protected" : "Disk pack \(status?.diskpackStatus.map(String.init) ?? "-")")
+            Text(healthy ? "Protected" : (verdict.reason ?? "Attention"))
+                .lineLimit(1)
         }
         .font(.callout.weight(.medium))
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
         .background(Capsule().fill(healthy ? Color.green.opacity(0.12) : Color.yellow.opacity(0.15)))
+        .help(verdict.reason ?? "")
     }
 }
 
