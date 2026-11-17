@@ -72,6 +72,18 @@ enum Notifier {
     /// notification instead of stacking a fresh one every run.
     static let identifier = "cc.jorvik.drobohealth.pack"
 
+    /// Fire-and-forget authorisation request so the one-time prompt
+    /// happens on a calm first run, never during an incident.
+    static func requestEarly() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error {
+                log.info("early authorisation request failed: \(error)")
+            } else {
+                log.info("notification authorisation: \(granted ? "granted" : "denied")")
+            }
+        }
+    }
+
     static func post(title: String, body: String, then: @escaping (Bool) -> Void) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
@@ -112,6 +124,15 @@ private func exitNow() {
 
 func runCheck() {
     var state = StateStore.load()
+
+    // Request authorisation on EVERY notify-enabled run, before the
+    // verdict matters: the first call shows the one-time prompt, every
+    // later call returns instantly granted. Without this the prompt would
+    // land mid-incident, exactly when a notification must not need a
+    // click first.
+    if ProcessInfo.processInfo.environment["DROBO_HEALTH_NOTIFY"] != "off" {
+        Notifier.requestEarly()
+    }
 
     var snapshotVerdict: PackHealth
     var readOK = false
