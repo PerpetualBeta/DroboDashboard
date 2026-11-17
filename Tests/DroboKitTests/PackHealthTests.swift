@@ -25,7 +25,7 @@ final class PackHealthTests: XCTestCase {
     func testGoodSlotsDoNotMaskProblemsAndViceVersa() {
         XCTAssertEqual(PackHealth.evaluate(status: status(), slots: [slot(0x03), slot(0x03)]), .healthy)
         if case .problem(let reason) = PackHealth.evaluate(status: status(diskpack: 2), slots: [slot(0x03)]) {
-            XCTAssertEqual(reason, "disk pack status 2")
+            XCTAssertEqual(reason, "disk pack status 2: pack incompatible with firmware")
         } else {
             XCTFail("expected a problem")
         }
@@ -66,7 +66,28 @@ final class PackHealthTests: XCTestCase {
         // read first; the reason text must be the status one.
         if case .problem(let reason) = PackHealth.evaluate(status: status(diskpack: 5),
                                                            slots: [slot(0x00)]) {
-            XCTAssertEqual(reason, "disk pack status 5")
+            XCTAssertEqual(reason, "disk pack status 5: multiple drives removed")
+        } else {
+            XCTFail("expected a problem")
+        }
+    }
+
+    func testOriginalDashboardLabelsAreApplied() {
+        // Codes and labels derived from the original Dashboard's
+        // ActionTextPresenter::SetDeviceAction decompile + strings_en.xml.
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 2), "pack incompatible with firmware")
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 3), "unknown pack state")
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 4), "mismatched disks (mixing packs)")
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 5), "multiple drives removed")
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 6), "multiple drives removed")
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 7), "multiple drives removed")
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 8), "1st-generation Drobo pack")
+    }
+
+    func testUnknownCodeRendersRawOnly() {
+        XCTAssertEqual(PackHealth.label(forDiskpackStatus: 9), nil)
+        if case .problem(let reason) = PackHealth.evaluate(status: status(diskpack: 9), slots: []) {
+            XCTAssertEqual(reason, "disk pack status 9")
         } else {
             XCTFail("expected a problem")
         }

@@ -111,6 +111,15 @@ public struct ESAStatusInfo: Equatable {
     public let relayoutCount: UInt32?
     public let doubleDegraded: UInt32?
 
+    public init(status: UInt32, extendedStatus: UInt32, diskpackStatus: UInt32?,
+                relayoutCount: UInt32?, doubleDegraded: UInt32?) {
+        self.status = status
+        self.extendedStatus = extendedStatus
+        self.diskpackStatus = diskpackStatus
+        self.relayoutCount = relayoutCount
+        self.doubleDegraded = doubleDegraded
+    }
+
     public static let subpage: UInt8 = 0x09
 
     public static func parse(_ data: Data) throws -> ESAStatusInfo {

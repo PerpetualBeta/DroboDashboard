@@ -10,8 +10,10 @@
 //
 //   DROBO_RENDER_FAKE=problem <binary>
 //
-// Renders immediately from synthetic data with a faulted slot, so the
-// problem pill and its reason text can be verified without a real fault.
+// Renders immediately from synthetic data with a faulted cache slot, so
+// the problem pill and its reason text can be verified without a real
+// fault. DROBO_RENDER_FAKE=diskpack renders a diskpack status 4 (the
+// original Dashboard's "mismatched disks") to check the label path.
 // (Implies no live poll; live renders stay the default when unset.)
 
 import AppKit
@@ -37,10 +39,18 @@ enum RenderHarness {
             let badSlot = ESASlotInfo(state: 0x01, capacityBytes: 4_000_000_000_000,
                                       reserved: 0, model: "ST4000DM004", shortModel: "ST4000")
             var snapshot = DeviceSnapshot()
-            snapshot.slots = (0..<5).map { _ in
-                ESASlotInfo(state: 0x03, capacityBytes: 4_000_000_000_000,
-                            reserved: 0, model: "ST4000DM004", shortModel: "ST4000")
-            } + (fake == "problem" ? [badSlot] : [])
+            snapshot.slots = (0..<6).map { i in
+                let state = (fake == "problem" && i == 5) ? UInt8(0x01) : UInt8(0x03)
+                return ESASlotInfo(state: state, capacityBytes: 4_000_000_000_000,
+                                   reserved: 0, model: "ST4000DM004", shortModel: "ST4000")
+            }
+            if fake == "diskpack" {
+                // Diskpack code 4 = the original Dashboard's "mismatched
+                // disks" (flag 0x800), so the label path renders.
+                snapshot.status = ESAStatusInfo(status: 0x28000, extendedStatus: 0,
+                                                diskpackStatus: 4, relayoutCount: nil,
+                                                doubleDegraded: nil)
+            }
             model.snapshot = snapshot
             model.state = .loaded
             model.lastRefresh = Date()
