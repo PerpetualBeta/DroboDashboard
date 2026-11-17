@@ -23,7 +23,7 @@ import DroboKit
 enum RenderHarness {
     @MainActor
     static func runIfRequested() {
-        guard let path = ProcessInfo.processInfo.environment["DROBO_RENDER_PNG"] else { return }
+        guard ProcessInfo.processInfo.environment["DROBO_RENDER_PNG"] != nil else { return }
 
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -36,8 +36,6 @@ enum RenderHarness {
             // Synthetic frame, rendered without touching the pack. Only
             // shapes the UI can actually show; measured values only, the
             // same shape a real fault produces.
-            let badSlot = ESASlotInfo(state: 0x01, capacityBytes: 4_000_000_000_000,
-                                      reserved: 0, model: "ST4000DM004", shortModel: "ST4000")
             var snapshot = DeviceSnapshot()
             snapshot.slots = (0..<6).map { i in
                 let state = (fake == "problem" && i == 5) ? UInt8(0x01) : UInt8(0x03)
@@ -55,7 +53,6 @@ enum RenderHarness {
             model.state = .loaded
             model.lastRefresh = Date()
             renderNow(model)
-            return
         }
 
         model.onSettled = { renderNow(model) }

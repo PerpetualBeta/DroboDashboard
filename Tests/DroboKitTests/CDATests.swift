@@ -28,4 +28,38 @@ final class CDATests: XCTestCase {
                                                   transferLength: 0x18))
         XCTAssertEqual(cdb, [0xEA, 0x10, 0x00, 0x0B, 0x00, 0x00, 0x21, 0x00, 0x18, 0x00])
     }
+
+    /// The identify blink: op 0x06, write, one byte. Matches the measured
+    /// original: identifyESA -> sendSystemOperation(6) -> ctor(type 1,
+    /// read false, transferLength 1, protocolByte<<6).
+    func testIdentifyCDB() {
+        let cdb = [UInt8](SCSICDB.systemOperation(op: 0x06, sequence: 1, read: false,
+                                                  transferLength: 1, protocolByte: 0))
+        XCTAssertEqual(cdb, [0xEA, 0x10, 0x00, 0x06, 0x01, 0x00, 0x21, 0x00, 0x01, 0x00])
+    }
+
+    /// The session's identify() must send exactly the measured CDB with an
+    /// incrementing sequence byte and a single zero payload byte.
+    func testSessionIdentifySendsMeasuredCDB() throws {
+        final class CaptureTransport: SCSITransport {
+            var cdbBytes: [UInt8] = []
+            var payload: [UInt8] = []
+            var direction: SCSITransferDirection?
+            func send(cdb: Data, data: inout Data, direction: SCSITransferDirection) throws -> Int {
+                cdbBytes = [UInt8](cdb)
+                payload = [UInt8](data)
+                self.direction = direction
+                return data.count
+            }
+            func close() {}
+        }
+        let transport = CaptureTransport()
+        let session = ESASession(transport: transport)
+        try session.identify()
+        XCTAssertEqual(transport.cdbBytes, [0xEA, 0x10, 0x00, 0x06, 0x01, 0x00, 0x21, 0x00, 0x01, 0x00])
+        XCTAssertEqual(transport.payload, [0x00])
+        XCTAssertEqual(transport.direction, .write)
+        try session.identify()
+        XCTAssertEqual(transport.cdbBytes[4], 2, "sequence increments per command")
+    }
 }

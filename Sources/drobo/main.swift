@@ -257,6 +257,8 @@ func parseArgs(_ argv: [String]) -> (command: String, options: [String: String])
         let arg = argv[index]
         if arg == "--eject" {
             options["eject"] = "true"
+        } else if arg == "--confirm" {
+            options["confirm"] = "true"
         } else if arg == "--disk", index + 1 < argv.count {
             index += 1
             options["disk"] = argv[index]
@@ -274,6 +276,85 @@ func parseArgs(_ argv: [String]) -> (command: String, options: [String: String])
 let argv = Array(CommandLine.arguments.dropFirst())
 var (command, options) = parseArgs(argv)
 
+/// The first write to the pack: the original's identify (blink the lights).
+/// Vendor 0xEA op 0x06, a 1-byte zero write, measured from
+/// ESASCSISession::identifyESA → sendSystemOperation in DDService64d.
+/// Dry run by default; --confirm actually sends. Needs the exclusive
+/// session (dext suspend/resume), and the volume unmounted first.
+func commandIdentify(args: inout [String: String]) throws {
+    let confirm = args["confirm"] == "true"
+    let transportKind = args["transport"] ?? "dext"
+    print("drobo identify — vendor 0xEA system op 0x06 (identify: blink the drive lights)")
+    print("write plan: unmount volume -> suspend (exclusive session) ->")
+    print("  CDB ea 10 00 06 NN 00 21 00 01 <proto<<6> + 1 zero byte -> wait 10 s -> resume -> remount")
+    print("sequence byte NN increments per command, as the original daemon does.")
+
+    let transport = try openTransport(args: args)
+    defer { transport.close() }
+    guard transportKind == "dext" else {
+        print("only the dext transport has the exclusive session today; re-run with --transport dext")
+        return
+    }
+    let session = ESASession(transport: transport)
+
+    // Pre-read so the confirm decision rests on live data, not hope.
+    guard let packState = try? session.getStatusInfo(), let slots = try? session.getSlotInfo() else {
+        print("could not read the pack over \(transportKind) transport; nothing sent")
+        return
+    }
+    print("pack: diskpack \(packState.diskpackStatus.map(String.init) ?? "-"), \(slots.count) slots" +
+          (slots.allSatisfy({ $0.state == 0x03 }) ? ", all ready" : ", SOMETHING NOT READY — stop and ask first"))
+    let verdict = PackHealth.evaluate(status: packState, slots: slots)
+    if !verdict.isHealthy {
+        print("pack reports: \(verdict.reason ?? "?")")
+        print("refusing to blink a pack that already has a problem; resolve that first")
+        return
+    }
+
+    guard confirm else {
+        print("DRY RUN: nothing sent. Re-run with --confirm to send the blink.")
+        return
+    }
+
+    // Unmount first: the suspend contract wants no mounted media on the LUN.
+    if let disk = args["disk"] {
+        let unmount = Process()
+        unmount.executableURL = URL(fileURLWithPath: "/usr/sbin/diskutil")
+        unmount.arguments = ["unmountDisk", disk]
+        unmount.standardOutput = FileHandle.standardOutput
+        try? unmount.run()
+        unmount.waitUntilExit()
+        if unmount.terminationStatus != 0 {
+            print("unmount of \(disk) failed; stopping before any write")
+            return
+        }
+    } else {
+        print("NOTE: no --disk given; if the volume is mounted, suspend may fail.")
+        print("Unmount it yourself first, or pass --disk diskN to unmount here.")
+    }
+
+    guard let control = transport as? SCSISessionControl else {
+        print("this transport has no exclusive-session control; stopping")
+        return
+    }
+    print("suspending services for the exclusive session...")
+    try control.suspendServices()
+    print("sending identify (blink)...")
+    do {
+        try session.identify()
+        print("sent. blinking for 10 s...")
+        Thread.sleep(forTimeInterval: 10)
+    } catch {
+        print("identify FAILED: \(error) — resuming to leave the pack mounted")
+        try? control.resumeServices()
+        return
+    }
+    print("resuming services...")
+    try control.resumeServices()
+    print("done. Give the volume a few seconds to remount, then: drobo status")
+    printUnlockHint()
+}
+
 do {
     switch command {
     case "list":
@@ -282,6 +363,8 @@ do {
         try probe(args: &options)
     case "status":
         try status(args: &options)
+    case "identify":
+        try commandIdentify(args: &options)
     case "heal":
         commandHeal()
     case "matchdebug":

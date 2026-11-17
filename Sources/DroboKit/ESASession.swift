@@ -18,6 +18,14 @@ public protocol SCSITransport: AnyObject {
     func close()
 }
 
+/// Optional exclusive-access session control. The dext transport
+/// implements it with UserSuspendServices/UserResumeServices (the vendor
+/// 0xEA opcodes need it); other transports just don't conform.
+public protocol SCSISessionControl: AnyObject {
+    func suspendServices() throws
+    func resumeServices() throws
+}
+
 /// Runs the vendor protocol against one device through one transport.
 /// `protocolByte` is the device session byte the original shifts left 6 into
 /// CDB byte 9; it stays a knob set to 0 until live data names the value.
@@ -80,6 +88,32 @@ public final class ESASession {
         // records (5 bays + the SSD cache slot on the 5D3) = 0x1b1.
         let raw = try modeSense(subpage: ESASlotInfo.subpage, allocationLength: 0x230)
         return try ESASlotInfo.parse(Self.pageData(ofModeSenseResponse: raw))
+    }
+
+    /// The next per-session sequence byte. The original daemon increments
+    /// under a lock before every system operation; a single-threaded CLI
+    /// only needs atomicity against itself.
+    private func nextSequence() -> UInt8 {
+        sequence &+= 1
+        return sequence
+    }
+
+    /// The original's ESASCSISession::identifyESA: sendSystemOperation(op
+    /// 0x06), measured in the DDService64d decompile as a WRITE of one
+    /// zero byte (REQUEST_TYPE 1, transferLength 1, read flag clear).
+    /// Blinks the pack's lights. Run inside a suspended session (see
+    /// SCSISessionControl); the caller resumes afterwards.
+    @discardableResult
+    public func identify() throws -> Int {
+        var payload: Data = Data([0x00])
+        let cdb = SCSICDB.systemOperation(op: 0x06, sequence: nextSequence(),
+                                          read: false, transferLength: 1,
+                                          protocolByte: protocolByte)
+        let realized = try transport.send(cdb: cdb, data: &payload, direction: .write)
+        guard realized == 1 else {
+            throw DroboError.transport("identify wrote \(realized) bytes, expected 1")
+        }
+        return realized
     }
 
     /// Closes the underlying transport.

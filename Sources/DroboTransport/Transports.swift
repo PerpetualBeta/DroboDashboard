@@ -127,13 +127,31 @@ public final class KextTransport: SCSITransport {
 /// IOConnectCallStructMethod selector 0. Input struct = three u32s
 /// (cdbLength, direction, dataLength) + the 16-byte CDB; output struct =
 /// the read data. v0.1 issues reads only.
-public final class DextTransport: SCSITransport {
+public final class DextTransport: SCSITransport, SCSISessionControl {
     private var connect: io_connect_t = IO_OBJECT_NULL
 
     public init() throws {
         // Open once and keep: a second open of the same node races the user
         // client lifecycle and dies with MACH_SEND_INVALID_DEST.
         connect = try DroboDextSupport.openDextConnection()
+    }
+
+    /// UserSuspendServices: the dext's built-in exclusive-access session
+    /// for the vendor 0xEA opcodes. The volume must be unmounted first.
+    public func suspendServices() throws {
+        let kr = IOConnectCallScalarMethod(connect, 1, nil, 0, nil, nil)
+        guard kr == KERN_SUCCESS else {
+            throw DroboError.transport("SuspendServices: 0x\(String(kr, radix: 16))")
+        }
+    }
+
+    /// UserResumeServices: releases the exclusive session and lets the
+    /// storage stack mount again.
+    public func resumeServices() throws {
+        let kr = IOConnectCallScalarMethod(connect, 2, nil, 0, nil, nil)
+        guard kr == KERN_SUCCESS else {
+            throw DroboError.transport("ResumeServices: 0x\(String(kr, radix: 16))")
+        }
     }
 
     public func send(cdb: Data, data: inout Data, direction: SCSITransferDirection) throws -> Int {
@@ -147,10 +165,19 @@ public final class DextTransport: SCSITransport {
         precondition(cdbBytes.count <= 16, "CDB longer than 16 bytes")
         cdbBytes.append(contentsOf: [UInt8](repeating: 0, count: 16 - cdbBytes.count))
 
+        // Input struct = three u32s + 16-byte CDB (+ inline payload on a
+        // write). IOConnectCallStructMethod caps the input at 4 KiB; the
+        // vendor ops here are 1-byte writes, and MODE SELECT pages will
+        // stay far below.
+        let headerSize = 3 * MemoryLayout<UInt32>.size
         var input = Data()
         let fields: [UInt32] = [UInt32(cdb.count), dir, UInt32(data.count)]
         fields.withUnsafeBytes { input.append(contentsOf: $0) }
         input.append(contentsOf: cdbBytes)
+        if direction == .write {
+            precondition(data.count <= 4096 - headerSize - 16, "write payload too large for struct method")
+            input.append(contentsOf: data)
+        }
 
         var transferred = 0
         let kr = input.withUnsafeBytes { inputBytes -> kern_return_t in
