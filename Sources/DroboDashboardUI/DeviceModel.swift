@@ -1,6 +1,7 @@
 // The dashboard's device model: one poll reads every ESA page through the
-// dext and publishes the parsed result. Polling is a fixed timer; the read
-// is read-only and touches no volume.
+// dext and publishes the parsed result. Polling runs on a timer whose
+// cadence is a live defaults knob; the read is read-only and touches no
+// volume.
 
 import Foundation
 import DroboKit
@@ -62,13 +63,31 @@ final class DeviceModel: ObservableObject {
 
     private let poller = DevicePoller()
     private var timer: DispatchSourceTimer?
+    /// The cadence the timer is currently scheduled at, so a defaults change
+    /// is detected by comparison at each fire.
+    private var scheduledInterval: Double?
 
     /// One-shot hook for the render harness: fires after a poll settles,
     /// success or failure.
     var onSettled: (() -> Void)?
 
+    /// The poll cadence knob. Live: read from the standard defaults every
+    /// timer fire, so
+    ///
+    ///     defaults write cc.jorvik.drobodashboard pollInterval -float 2
+    ///
+    /// takes effect within one poll cycle, no relaunch. Clamped to a sane
+    /// range so a fat-fingered value cannot spin the driver or stall the
+    /// window. Registered so a read always answers.
+    static let pollIntervalKey = "pollInterval"
+
+    static func currentPollInterval() -> Double {
+        min(60, max(0.5, UserDefaults.standard.double(forKey: pollIntervalKey)))
+    }
+
     func start() {
         guard timer == nil else { return }
+        UserDefaults.standard.register(defaults: [Self.pollIntervalKey: 5.0])
         poller.onResult = { [weak self] result in
             guard let self else { return }
             switch result {
@@ -81,12 +100,21 @@ final class DeviceModel: ObservableObject {
             }
             self.onSettled?()
         }
-        // A fixed cadence is fine for a status window; the reads are cheap
-        // MODE SENSE sweeps and a poll skipped while one is in flight is
-        // harmless. Long-term the cadence should ship as a defaults knob.
+        // The reads are cheap MODE SENSE sweeps and a poll skipped while one
+        // is in flight is harmless. The interval is re-read at every fire so
+        // the knob is live without a relaunch.
         let source = DispatchSource.makeTimerSource(queue: .main)
-        source.schedule(deadline: .now(), repeating: 5)
-        source.setEventHandler { [weak self] in self?.poller.poll() }
+        scheduledInterval = Self.currentPollInterval()
+        source.schedule(deadline: .now(), repeating: scheduledInterval!)
+        source.setEventHandler { [weak self] in
+            self?.poller.poll()
+            guard let self else { return }
+            let interval = Self.currentPollInterval()
+            if interval != self.scheduledInterval {
+                self.scheduledInterval = interval
+                self.timer?.schedule(deadline: .now() + interval, repeating: interval)
+            }
+        }
         timer = source
         source.resume()
     }

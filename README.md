@@ -52,6 +52,8 @@ comparison after any change: free 8,293,250,519,040 / used
 - `Sources/drobo` — the management CLI.
 - `Sources/DroboDashboardUI` — the Dashboard window.
 - `Sources/DroboServiceHost` — the resident host app.
+- `Sources/DroboHealthAgent` — the LaunchAgent-run health check: one
+  read-only sweep per run, Notification Center post on a verdict change.
 - `Sources/DDService` — the read-only daemon on 127.0.0.1:4502 answering
   the `eCmd*` text commands the original Dashboard UI used. Not part of the
   deployment; kept because the original's wire protocol is documented by it.
@@ -278,6 +280,40 @@ original daemon's constructors. First candidate when a write is wanted:
 identify-blink 0x06, with the volume unmounted via the suspend/resume
 session.
 
+## The health agent
+
+`DroboHealth.app` is the persistent check for when the dashboard is not
+open. A user LaunchAgent (`Resources/cc.jorvik.drobohealth.plist`, label
+`cc.jorvik.drobohealth`) runs it every 15 minutes (RunAtLoad + StartInterval
+900). Each run: one read-only sweep through the dext, a verdict from the
+shared `PackHealth` evaluator (the same rules as the dashboard pill), and a
+Notification Center post ONLY when the verdict changes: into a problem, or
+back to healthy. A steady problem stays delivered but does not re-post.
+
+Rules the verdict uses (all measured): diskpack status 0 or 1 healthy,
+anything else a problem; relayout or doubleDegraded non-zero a problem;
+any slot state other than 0x03 a problem, named by bay or cache slot. Two
+consecutive failed polls count as "cannot reach the disk pack"; one
+failure is treated as transient.
+
+State: `~/Library/Application Support/DroboHealth/state.json` (verdict,
+reason, consecutive failures). Logs: `~/Library/Logs/DroboHealth/health.log`
+via the `DROBO_LOG` gate. Set `DROBO_HEALTH_NOTIFY=off` to disable
+Notification Center entirely (state machine and logging still run).
+
+Install:
+
+    # app bundle: user's Terminal, App Management territory
+    cp -R ~/Developer/DroboDashboard/.build/DroboHealth.app /Applications/
+    # agent (agent shell is fine for ~/Library/LaunchAgents):
+    cp ~/Developer/DroboDashboard/Resources/cc.jorvik.drobohealth.plist \
+       ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/cc.jorvik.drobohealth.plist
+
+The first run triggers the one-time notification permission prompt. Change
+the cadence by editing StartInterval in the LaunchAgent plist, then
+`launchctl bootout gui/$(id -u)/cc.jorvik.drobohealth` and bootstrap again.
+
 ## Knobs and placeholders
 
 - `protocolByte` — CDB byte 9 carries the device protocol byte shifted
@@ -288,5 +324,7 @@ session.
 - Status page relayout/doubleDegraded fields exist only in the 0x14/0x18
   page generations; the 5D3 declares the 0x10 generation and those fields
   stay unavailable.
-- Dashboard poll cadence is fixed at five seconds; a `defaults` knob is
-  the planned change.
+- Dashboard poll cadence: live `defaults` knob,
+  `defaults write cc.jorvik.drobodashboard pollInterval -float <seconds>`
+  (default 5, clamped 0.5 to 60). Takes effect within one poll cycle, no
+  relaunch.
