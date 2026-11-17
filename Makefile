@@ -1,6 +1,6 @@
 CONFIG ?= release
 IDENTITY ?= $(shell security find-identity -v -p codesigning | awk -F'"' '/Apple Development/{print $$2; exit}')
-PROFILE   ?= $(HOME)/Downloads/ccjorvikdrobodext.provisionprofile
+PROFILE   ?= $(HOME)/Downloads/ccjorvikdrobodext-6.provisionprofile
 HOST_PROFILE ?= $(HOME)/Downloads/ccjorvikdroboservice-2.provisionprofile
 
 APP := .build/DroboService.app

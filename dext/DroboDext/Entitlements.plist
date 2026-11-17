@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<!-- Mirrors the DriverKit development profile (regenerated for
-     family.scsicontroller + allow-any-userclient-access; expires 90 days
-     after issue). The App ID must carry: DriverKit (development),
-     DriverKit Family SCSIController (development), DriverKit Allow Third
-     Party UserClients, DriverKit Allow Any UserClient. -->
+<!-- Mirrors the DriverKit development profile ccjorvikdrobodext-6 (regenerated
+     for family.scsicontroller + allow-any-userclient-access; expires
+     2027-11-16). The App ID must carry: DriverKit (development), DriverKit
+     Family SCSIController (development), DriverKit Allow Third Party
+     UserClients, DriverKit Allow Any UserClient. -->
 <dict>
 	<key>com.apple.developer.driverkit</key>
 	<true/>
