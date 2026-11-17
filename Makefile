@@ -5,7 +5,7 @@ HOST_PROFILE ?= $(HOME)/Downloads/ccjorvikdroboservice-2.provisionprofile
 
 APP := .build/DroboService.app
 
-.PHONY: build test clean daemon cli host dext icon
+.PHONY: build test clean daemon cli host dashboard agent dext icon
 
 icon: Resources/AppIcon.png
 	rm -rf .build/icon/AppIcon.iconset
@@ -35,6 +35,17 @@ host: build dext icon
 	@echo "Built and signed $(APP). Install with: open $(APP)"
 
 DASH := .build/DroboDashboard.app
+
+AGENT := .build/DroboHealth.app
+
+agent: build icon
+	@rm -rf $(AGENT)
+	@mkdir -p $(AGENT)/Contents/MacOS $(AGENT)/Contents/Resources
+	cp .build/$(CONFIG)/DroboHealthAgent $(AGENT)/Contents/MacOS/DroboHealth
+	cp Resources/AppIcon.icns $(AGENT)/Contents/Resources/
+	@printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>CFBundleIdentifier</key>\n\t<string>cc.jorvik.drobohealth</string>\n\t<key>CFBundleName</key>\n\t<string>DroboHealth</string>\n\t<key>CFBundleExecutable</key>\n\t<string>DroboHealth</string>\n\t<key>CFBundlePackageType</key>\n\t<string>APPL</string>\n\t<key>CFBundleIconFile</key>\n\t<string>AppIcon</string>\n\t<key>CFBundleShortVersionString</key>\n\t<string>0.1.0</string>\n\t<key>CFBundleVersion</key>\n\t<string>1</string>\n\t<key>LSUIElement</key>\n\t<true/>\n\t<key>NSPrincipalClass</key>\n\t<string>NSApplication</string>\n</dict>\n</plist>\n' > $(AGENT)/Contents/Info.plist
+	codesign --force --timestamp --options runtime --sign "$(IDENTITY)" $(AGENT)
+	@echo "Built and signed $(AGENT). Install with: open $(AGENT)"
 
 dashboard: build icon
 	@rm -rf $(DASH)

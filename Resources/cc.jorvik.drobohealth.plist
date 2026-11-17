@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>cc.jorvik.drobohealth</string>
+	<key>Comment</key>
+	<string>DroboHealth: periodic read-only disk pack health check, notifies on verdict changes</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/DroboHealth.app/Contents/MacOS/DroboHealth</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>900</integer>
+	<key>RunAtLoad</key>
+	<true/>
+</dict>
+</plist>

@@ -38,6 +38,12 @@ let package = Package(
             name: "DroboDashboardUI",
             dependencies: ["DroboKit", "DroboTransport", "DDServiceC"]
         ),
+        // Persistent health check: one read-only sweep per run, posts to
+        // Notification Center on a verdict change. Run by a LaunchAgent.
+        .executableTarget(
+            name: "DroboHealthAgent",
+            dependencies: ["DroboKit", "DroboTransport", "DDServiceC"]
+        ),
         .testTarget(name: "DroboKitTests", dependencies: ["DroboKit"])
     ]
 )
