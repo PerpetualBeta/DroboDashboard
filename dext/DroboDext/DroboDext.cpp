@@ -3,8 +3,8 @@
 // the RPC dispatch. The subclass implements the framework's pure virtuals and
 // exposes a user client with three selectors:
 //
-//   0  SendCDB      one vendor CDB (reads in v0.1); needs no session for
-//                   standard opcodes like MODE SENSE(10) 0x5A
+//   0  SendCDB      one vendor CDB; reads (2) need no session, writes (1)
+//                   and no-data (0) carry the vendor system ops (0xEA)
 //   1  Suspend      UserSuspendServices: exclusive access for vendor
 //                   opcodes (0xEA); the volume must be unmounted first
 //   2  Resume       UserResumeServices: release + remount
@@ -39,6 +39,7 @@ struct SendCDBInput {
 static const uint64_t kSelectorSendCDB = 0;
 static const uint64_t kSelectorSuspend = 1;
 static const uint64_t kSelectorResume  = 2;
+static const uint64_t kSelectorBlink   = 3;   // the USB probe's raw-BOT identify
 
 struct DroboDextDriver_IVars {
     DroboUserClient* fClient;
@@ -46,6 +47,7 @@ struct DroboDextDriver_IVars {
 
 struct DroboUserClient_IVars {
     DroboDextDriver* fDriver;
+    DroboUSBProbe*   fProbe;    // set when the client opens on the USB probe node
 };
 
 // MARK: - Driver
@@ -123,15 +125,23 @@ kern_return_t IMPL(DroboUserClient, Start)
 {
     kern_return_t ret = Start(provider, SUPERDISPATCH);
     if (ret != kIOReturnSuccess) return ret;
+    // The client opens on EITHER the SCSI driver node (the LUN) or the
+    // USB probe node (the interface). v20: the probe path carries the
+    // blink; the SCSI path carries the survey + the exclusive session.
     ivars->fDriver = OSDynamicCast(DroboDextDriver, provider);
-    if (ivars->fDriver == nullptr) return kIOReturnBadArgument;
-    ivars->fDriver->retain();
+    ivars->fProbe  = OSDynamicCast(DroboUSBProbe, provider);
+    if (ivars->fDriver == nullptr && ivars->fProbe == nullptr) return kIOReturnBadArgument;
+    if (ivars->fDriver) ivars->fDriver->retain();
+    if (ivars->fProbe)  ivars->fProbe->retain();
     return kIOReturnSuccess;
 }
 
 kern_return_t IMPL(DroboUserClient, Stop)
 {
-    if (ivars) OSSafeReleaseNULL(ivars->fDriver);
+    if (ivars) {
+        OSSafeReleaseNULL(ivars->fDriver);
+        OSSafeReleaseNULL(ivars->fProbe);
+    }
     return Stop(provider, SUPERDISPATCH);
 }
 
@@ -142,7 +152,28 @@ kern_return_t DroboUserClient::ExternalMethod(uint64_t selector,
 {
     dlog("ExternalMethod selector %llu", selector);
 
-    if (ivars == nullptr || ivars->fDriver == nullptr) {
+    if (ivars == nullptr) {
+        dlog("reject: no ivars");
+        return kIOReturnNotOpen;
+    }
+
+    // v20: the blink over the dext's own USB BOT pipes. Input: u32 sequence.
+    // Output: three u32s — the pipe kr, the CSW status (0 = GOOD), residue.
+    if (selector == kSelectorBlink) {
+        if (ivars->fProbe == nullptr) return kIOReturnNotOpen;
+        uint32_t seq = 1;
+        OSData* input = arguments->structureInput;
+        if (input != nullptr && input->getLength() >= sizeof(uint32_t)) {
+            seq = *reinterpret_cast<const uint32_t*>(input->getBytesNoCopy());
+        }
+        uint32_t krOut = 0, csw = 0xFFFFFFFF, residue = 0;
+        ivars->fProbe->Blink(seq, &krOut, &csw, &residue);
+        uint32_t out[3] = {krOut, csw, residue};
+        arguments->structureOutput = OSData::withBytes(out, sizeof(out));
+        return kIOReturnSuccess;
+    }
+
+    if (ivars->fDriver == nullptr) {
         dlog("reject: no driver ivars");
         return kIOReturnNotOpen;
     }
@@ -167,9 +198,26 @@ kern_return_t DroboUserClient::ExternalMethod(uint64_t selector,
     if (request->cdbLength == 0 || request->cdbLength > 16) {
         return kIOReturnBadArgument;
     }
-    if (request->direction != 2) {
-        // v0.1 is read-only; the whole survey surface is MODE SENSE reads.
+    if (request->direction > 2) {
         return kIOReturnUnsupported;
+    }
+    if (request->direction != 2) {
+        // v0.2: write (1) and no-data (0) pass through for the vendor
+        // system operations (0xEA identify et al). Reads (2) stay the
+        // survey path. The write payload, when present, follows the CDB
+        // in the input struct.
+    }
+    if (request->dataLength > 0 && request->direction == 2) {
+        // reads declare an allocation length; nothing extra to validate
+    }
+    const uint32_t inputHeader = sizeof(SendCDBInput);
+    const uint32_t payloadLength =
+        (request->direction == 1) ? request->dataLength : 0;
+    if (request->direction == 1) {
+        // A write must carry its payload inline.
+        if (input == nullptr || input->getLength() < inputHeader + payloadLength) {
+            return kIOReturnBadArgument;
+        }
     }
     // struct-method output: structureOutput arrives NULL and the driver
     // CREATES the OSData to return (the OS releases it). Respect the
@@ -180,12 +228,34 @@ kern_return_t DroboUserClient::ExternalMethod(uint64_t selector,
         return kIOReturnBadArgument;
     }
 
-    // Data + sense buffers for the framework.
+    // Data + sense buffers for the framework. Reads allocate an IN buffer
+    // the target fills; writes allocate an OUT buffer prefilled from the
+    // caller's payload (LOCALONLY buffers are directly dereferenceable);
+    // no-data ops allocate a 1-byte placeholder.
     IOBufferMemoryDescriptor* dataBuffer = nullptr;
     uint8_t senseBuffer[22] = {0};
+    const uint32_t bufferLength = request->dataLength ? request->dataLength : 1;
+    const bool isWrite = (request->direction == 1);
+    const bool isRead = (request->direction == 2);
     kern_return_t kr = IOBufferMemoryDescriptor::Create(
-        kIOMemoryDirectionIn, request->dataLength ? request->dataLength : 1, 0, &dataBuffer);
+        isWrite ? kIOMemoryDirectionOut : kIOMemoryDirectionIn,
+        bufferLength, 0, &dataBuffer);
     if (kr != kIOReturnSuccess) return kr;
+
+    if (isWrite && payloadLength > 0) {
+        const uint8_t* payload =
+            reinterpret_cast<const uint8_t*>(input->getBytesNoCopy()) + inputHeader;
+        void* dest = nullptr;
+        IOAddressSegment range;
+        if (dataBuffer->GetAddressRange(&range) == kIOReturnSuccess) {
+            dest = reinterpret_cast<void*>(range.address);
+            memcpy(dest, payload, payloadLength);
+            kr = kIOReturnSuccess;
+        } else {
+            dataBuffer->release();
+            return kIOReturnError;
+        }
+    }
 
     SCSIType00OutParameters out = {};
     out.fLogicalUnitNumber = 0;
@@ -196,8 +266,11 @@ kern_return_t DroboUserClient::ExternalMethod(uint64_t selector,
                   request->cdb[8], request->cdb[9], request->cdb[10], request->cdb[11],
                   request->cdb[12], request->cdb[13], request->cdb[14], request->cdb[15]);
     out.fRequestedByteCountOfTransfer = request->dataLength;
-    out.fBufferDirection = kIOMemoryDirectionIn;
-    out.fDataTransferDirection = kSCSIDataTransfer_FromTargetToInitiator;
+    out.fBufferDirection = isWrite ? kIOMemoryDirectionOut : kIOMemoryDirectionIn;
+    out.fDataTransferDirection = isWrite
+        ? kSCSIDataTransfer_FromInitiatorToTarget
+        : (isRead ? kSCSIDataTransfer_FromTargetToInitiator
+                  : kSCSIDataTransfer_NoDataTransfer);
     out.fSenseLengthRequested = 18;   // fixed-format sense
     IOAddressSegment range;
     if (dataBuffer->GetAddressRange(&range) == kIOReturnSuccess) {
@@ -237,6 +310,31 @@ kern_return_t DroboUserClient::ExternalMethod(uint64_t selector,
         }
     }
     dataBuffer->release();
+
+    // v12: append a fixed result trailer so the client sees what the
+    // DEVICE said, not just that the transport worked: u32 magic, u32
+    // completion status, u32 realized, u8 sense length, 22 bytes of
+    // sense. The magic makes the trailer unambiguous for a client that
+    // may also talk to a pre-v12 dext (whose whole output is data).
+    {
+        uint8_t trailer[4 + 4 + 4 + 1 + 22] = {0};
+        const uint32_t magic = 0x44443132;   // 'DD12'
+        uint32_t completion = in.fCompletionStatus;
+        // The trailer's realized field is u32; every survey/vendor transfer
+        // here is far below 4 GiB, so the narrowing is intentional.
+        uint32_t realizedCount = (uint32_t)in.fRealizedByteCountOfTransfer;
+        memcpy(trailer, &magic, 4);
+        memcpy(trailer + 4, &completion, 4);
+        memcpy(trailer + 8, &realizedCount, 4);
+        trailer[12] = (uint8_t)sizeof(senseBuffer);
+        memcpy(trailer + 13, senseBuffer, sizeof(senseBuffer));
+        if (arguments->structureOutput != nullptr) {
+            arguments->structureOutput->appendBytes(trailer, sizeof(trailer));
+        } else {
+            // No data phase output: the trailer IS the output.
+            arguments->structureOutput = OSData::withBytes(trailer, sizeof(trailer));
+        }
+    }
 
     if (kr != kIOReturnSuccess) {
         dlog("UserSendCDB failed 0x%x (status %u, transferred %llu)",

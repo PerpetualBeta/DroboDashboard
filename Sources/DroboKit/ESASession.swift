@@ -26,6 +26,15 @@ public protocol SCSISessionControl: AnyObject {
     func resumeServices() throws
 }
 
+/// Optional per-command verdicts: what the DEVICE said about the last
+/// command. The dext (v12+) transport reports the SCSI completion status
+/// and sense bytes from its result trailer.
+public protocol SCSITransportDiagnostics: AnyObject {
+    var lastSCSIStatus: UInt8? { get }
+    var lastSense: Data? { get }
+    var lastRealized: Int? { get }
+}
+
 /// Runs the vendor protocol against one device through one transport.
 /// `protocolByte` is the device session byte the original shifts left 6 into
 /// CDB byte 9; it stays a knob set to 0 until live data names the value.
@@ -98,20 +107,60 @@ public final class ESASession {
         return sequence
     }
 
-    /// The original's ESASCSISession::identifyESA: sendSystemOperation(op
-    /// 0x06), measured in the DDService64d decompile as a WRITE of one
-    /// zero byte (REQUEST_TYPE 1, transferLength 1, read flag clear).
-    /// Blinks the pack's lights. Run inside a suspended session (see
-    /// SCSISessionControl); the caller resumes afterwards.
+    /// One vendor system operation with the device's verdict, for the
+    /// identify flow's probe battery: op 0x06 write is the blink;
+    /// op 0x0A read is the original's telemetry read. ANY device response
+    /// (GOOD or CHECK CONDITION with sense) proves the framework
+    /// DELIVERED the task; status 5 (DeliveryFailure) with empty sense
+    /// means the transport refused it before the bus.
+    public func sendSystemOperation(op: UInt8, read: Bool,
+                                    transferLength: Int) throws -> (status: UInt8?, realized: Int?) {
+        var data = Data(repeating: 0, count: transferLength)
+        let cdb = SCSICDB.systemOperation(op: op, sequence: nextSequence(), read: read,
+                                          transferLength: transferLength, protocolByte: protocolByte)
+        let realized = try transport.send(cdb: cdb, data: &data, direction: read ? .read : .write)
+        if let diag = transport as? SCSITransportDiagnostics {
+            return (diag.lastSCSIStatus, diag.lastRealized)
+        }
+        return (nil, realized)
+    }
+
+    /// The original's identifyESA: the blink. MEASURED from DDService64d
+    /// (mining record, commit 101b02d): identifyESA =
+    /// sendSystemOperation(6) = ctor(REQUEST_TYPE 1, op 6, seq = ++seq,
+    /// read = false, transferLength 1, ONE ZERO BYTE, protocolByte 0).
+    /// A 4-byte BE-duration shape was tried live on 2026-11-17 and the
+    /// device never got it: DeliveryFailure (task status 5), realized 4,
+    /// no sense — a BOT phase mismatch, because the firmware expects the
+    /// 1-byte shape it was built for. The blink duration is the device's
+    /// business; nobody tells it how long.
+    ///
+    /// The verdict that matters is the DEVICE's SCSI status from the dext
+    /// trailer, not write bookkeeping: GOOD means the op reached it.
     @discardableResult
     public func identify() throws -> Int {
-        var payload: Data = Data([0x00])
+        var payload = Data([0x00])
         let cdb = SCSICDB.systemOperation(op: 0x06, sequence: nextSequence(),
-                                          read: false, transferLength: 1,
+                                          read: false, transferLength: payload.count,
                                           protocolByte: protocolByte)
         let realized = try transport.send(cdb: cdb, data: &payload, direction: .write)
-        guard realized == 1 else {
-            throw DroboError.transport("identify wrote \(realized) bytes, expected 1")
+
+        if let diag = transport as? SCSITransportDiagnostics, let status = diag.lastSCSIStatus {
+            guard status == 0 else {
+                let sense = [UInt8](diag.lastSense ?? Data())
+                let key = sense.count > 2 ? Int(sense[2] & 0x0F) : -1
+                let asc = sense.count > 12 ? Int(sense[12]) : -1
+                let ascq = sense.count > 13 ? Int(sense[13]) : -1
+                throw DroboError.transport(
+                    "device rejected identify: SCSI status \(status), sense key \(key), " +
+                    "ASC 0x\(String(asc, radix: 16)), ASCQ 0x\(String(ascq, radix: 16))")
+            }
+            return realized
+        }
+        // Pre-v12 transport with no device verdict: fall back to the
+        // realized count.
+        guard realized == payload.count else {
+            throw DroboError.transport("identify wrote \(realized) bytes, expected \(payload.count)")
         }
         return realized
     }

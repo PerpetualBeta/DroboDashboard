@@ -32,7 +32,7 @@ GEN      := $(BUILDDIR)/gen
 CXXFLAGS := -x c++ -std=gnu++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
             -isysroot $(DK_SDK) -F $(FW) -I $(GEN)
 LDFLAGS  := -isysroot $(DK_SDK) -F $(FW) \
-            -framework SCSIPeripheralsDriverKit -framework DriverKit
+            -framework SCSIPeripheralsDriverKit -framework DriverKit -framework USBDriverKit
 
 DEXT     ?= $(BUILDDIR)/$(NAME).dext
 
@@ -47,11 +47,12 @@ $(GEN)/DroboDext.h $(GEN)/DroboDext.cpp &: dext/DroboDext/DroboDext.iig
 	    -D__IIG=1 -isysroot $(DK_SDK) -F $(FW) -x c++
 	@echo '#include "DroboDext.h"' > $(GEN)/DroboDextDriver.h
 	@echo '#include "DroboDext.h"' > $(GEN)/DroboUserClient.h
+	@echo '#include "DroboDext.h"' > $(GEN)/DroboUSBProbe.h
 	@echo '#pragma once' > $(GEN)/DroboDext.h.tmp && cat $(GEN)/DroboDext.h >> $(GEN)/DroboDext.h.tmp && mv $(GEN)/DroboDext.h.tmp $(GEN)/DroboDext.h
 
-$(DEXT): $(GEN)/DroboDext.cpp $(GEN)/DroboDext.h dext/DroboDext/DroboDext.cpp dext/DroboDext/Info.plist dext/DroboDext/Entitlements.plist
+$(DEXT): $(GEN)/DroboDext.cpp $(GEN)/DroboDext.h dext/DroboDext/DroboDext.cpp dext/DroboDext/DroboUSBProbe.cpp dext/DroboDext/Info.plist dext/DroboDext/Entitlements.plist
 	@mkdir -p $(DEXT)/Contents/MacOS
-	$(CC) $(CXXFLAGS) $(GEN)/DroboDext.cpp dext/DroboDext/DroboDext.cpp \
+	$(CC) $(CXXFLAGS) $(GEN)/DroboDext.cpp dext/DroboDext/DroboDext.cpp dext/DroboDext/DroboUSBProbe.cpp \
 	    -o $(DEXT)/Contents/MacOS/$(NAME) $(LDFLAGS)
 	cp dext/DroboDext/Info.plist $(DEXT)/Contents/Info.plist
 ifdef PROFILE

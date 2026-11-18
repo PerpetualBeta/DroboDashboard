@@ -29,17 +29,17 @@ final class CDATests: XCTestCase {
         XCTAssertEqual(cdb, [0xEA, 0x10, 0x00, 0x0B, 0x00, 0x00, 0x21, 0x00, 0x18, 0x00])
     }
 
-    /// The identify blink: op 0x06, write, one byte. Matches the measured
-    /// original: identifyESA -> sendSystemOperation(6) -> ctor(type 1,
-    /// read false, transferLength 1, protocolByte<<6).
+    /// The identify blink: op 0x06, write, ONE ZERO BYTE — the mined
+    /// original shape (transferLength 1). The CDB's bytes 7-8 carry the
+    /// 16-bit BE transfer length.
     func testIdentifyCDB() {
         let cdb = [UInt8](SCSICDB.systemOperation(op: 0x06, sequence: 1, read: false,
                                                   transferLength: 1, protocolByte: 0))
         XCTAssertEqual(cdb, [0xEA, 0x10, 0x00, 0x06, 0x01, 0x00, 0x21, 0x00, 0x01, 0x00])
     }
 
-    /// The session's identify() must send exactly the measured CDB with an
-    /// incrementing sequence byte and a single zero payload byte.
+    /// The session's identify() must send exactly the mined CDB with an
+    /// incrementing sequence byte and a one-zero-byte payload.
     func testSessionIdentifySendsMeasuredCDB() throws {
         final class CaptureTransport: SCSITransport {
             var cdbBytes: [UInt8] = []
